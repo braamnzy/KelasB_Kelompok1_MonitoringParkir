@@ -24,4 +24,6 @@ Proyek ini adalah prototipe sistem parkir otomatis berbasis *embedded system*. S
 ### Komponen Utama:
 1. Mikrokontroler (Arduino / ESP32)
 2. Sensor Ultrasonik HC-SR04
-3. Buzzer & LED
+3. Buzzer
+4. LED
+5. 
