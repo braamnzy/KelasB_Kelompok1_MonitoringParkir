@@ -26,4 +26,3 @@ Proyek ini adalah prototipe sistem parkir otomatis berbasis *embedded system*. S
 2. Sensor Ultrasonik HC-SR04
 3. Buzzer
 4. LED
-5. 
