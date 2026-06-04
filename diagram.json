@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "author": "ANDYKA ZEFANYA BRAMANTYO 1",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-arduino-uno", "id": "uno", "top": -37.8, "left": -106.2, "attrs": {} },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd1",
+      "top": 217.6,
+      "left": 188,
+      "attrs": { "pins": "i2c" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": -224.4,
+      "left": 186.2,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": -100.8,
+      "left": 181.85,
+      "rotate": 90,
+      "attrs": { "value": "220" }
+    },
+    { "type": "wokwi-hc-sr04", "id": "ultrasonic1", "top": -113.7, "left": 235.9, "attrs": {} },
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz1",
+      "top": -314.4,
+      "left": 97.8,
+      "attrs": { "volume": "0.1" }
+    }
+  ],
+  "connections": [
+    [ "uno:A4", "lcd1:SDA", "green", [ "v0" ] ],
+    [ "uno:A5", "lcd1:SCL", "green", [ "v0" ] ],
+    [ "uno:5V", "lcd1:VCC", "red", [ "v0" ] ],
+    [ "uno:GND.2", "lcd1:GND", "black", [ "v0" ] ],
+    [ "uno:5V", "ultrasonic1:VCC", "red", [ "v28.7", "h263" ] ],
+    [ "ultrasonic1:GND", "uno:GND.3", "black", [ "v192", "h-264.4" ] ],
+    [ "uno:GND.3", "led1:C", "black", [ "v19.1", "h359.2" ] ],
+    [ "led1:A", "r2:1", "green", [ "v0" ] ],
+    [ "uno:7", "ultrasonic1:TRIG", "green", [ "v-19.2", "h138", "v28.8" ] ],
+    [ "uno:6", "ultrasonic1:ECHO", "green", [ "v-9.6", "h118.9", "v28.8", "h115.2" ] ],
+    [ "uno:GND.1", "bz1:1", "black", [ "v-182.4", "h105.9" ] ],
+    [ "r2:2", "uno:9", "green", [ "h-153.6", "v-1.2" ] ],
+    [ "bz1:2", "uno:10", "red", [ "v153.6", "h-96.4" ] ]
+  ],
+  "dependencies": {}
+}
