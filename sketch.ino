@@ -93,6 +93,7 @@ void taskKontrolOutput(void *pvParameters) {
 
       unsigned long menit = 0;
       unsigned long detik = 0;
+      unsigned long tarif = 0;
       
       if (statusParkir) {
         unsigned long totalDetik = (sekarang - waktuMasuk) / 1000;
