@@ -98,6 +98,7 @@ void taskKontrolOutput(void *pvParameters) {
         unsigned long totalDetik = (sekarang - waktuMasuk) / 1000;
         menit = totalDetik / 60;
         detik = totalDetik % 60;
+        tarif = ((menit / 30) + 1) * 2000;
       }
 
       analogWrite(PIN_LED, ledVal); 
@@ -118,39 +119,32 @@ void taskKontrolOutput(void *pvParameters) {
 
       lcd.clear();
 
-      lcd.setCursor(0, 0);
-      lcd.print("Jrk: ");
-      if (jarak < 0) {
-        lcd.print("No Object");
-      } else {
-        lcd.print(jarak, 1);
-        lcd.print("cm");
-      }
-
-      lcd.setCursor(0, 1);
       if (statusParkir) {
-        lcd.print("T: ");
+        lcd.setCursor(0, 0);
+        lcd.print("Durasi: ");
         if(menit < 10) lcd.print("0");
         lcd.print(menit);
         lcd.print("m ");
         if(detik < 10) lcd.print("0");
         lcd.print(detik);
         lcd.print("s");
-        
-        lcd.setCursor(10, 1);
-        lcd.print(zona);
-      } else {
-        lcd.print("Status: Kosong");
+
+        lcd.setCursor(0, 1);
+        lcd.print("Tarif : Rp ");
+        lcd.print(tarif);
+      } 
+      else {
+        lcd.setCursor(0, 0);
+        lcd.print("Slot: Kosong");
+        lcd.setCursor(0, 1);
+        lcd.print("Tarif: Rp 0");
       }
 
       Serial.print("Jarak: ");
       Serial.print(jarak);
       if (statusParkir) {
-        Serial.print(" | Waktu Parkir: ");
-        Serial.print(menit);
-        Serial.print("m ");
-        Serial.print(detik);
-        Serial.println("s");
+        Serial.print(" | Waktu: "); Serial.print(menit); Serial.print("m "); Serial.print(detik); Serial.print("s");
+        Serial.print(" | Tarif: Rp "); Serial.println(tarif);
       } else {
         Serial.println(" | Slot Kosong");
       }
