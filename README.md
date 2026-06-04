@@ -19,9 +19,16 @@ Sistem monitoring parkir pintar menggunakan sensor ultrasonik untuk mendeteksi r
 
 ## Deskripsi Proyek
 
-Proyek ini adalah prototipe sistem parkir otomatis berbasis *embedded system*. Sistem dirancang untuk mengoptimalkan keamanan proses parkir dengan mendeteksi adanya rintangan di belakang objek.
+Proyek ini adalah prototipe sistem parkir otomatis berbasis *embedded system*. Sistem dirancang untuk mengoptimalkan keamanan proses parkir dengan mendeteksi adanya rintangan di belakang objek dan mencatat parkir untuk kendaraan.
 
 ### Komponen Utama:
 1. Mikrokontroler (Arduino / ESP32)
 2. Sensor Ultrasonik HC-SR04
-3. Buzzer & LED
+3. Buzzer
+4. LED
+---
+### Cara Kerja
+Ketika ada kendaraan mendekat maka sensor US akan membantu untuk supir mengukur jarak. Pada saat itu sistem akan mengalokasikan pada sistem parkir bahwa slot ini sudah terisi Ketika sudah mencapai titik yg pas dan mobil sudah  tidak ada pergerakan maka sistem akan memulai hitungan biaya parkirnya. Biaya parkir akan ditampilan ke LCD
+---
+
+
