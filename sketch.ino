@@ -1,157 +1,189 @@
-#include <LiquidCrystal_I2C.h>
 #include <Wire.h>
-#include <Arduino.h>
-#include <Arduino_FreeRTOS.h>
-#include <queue.h>
+#include <LiquidCrystal_I2C.h>
 
-#define PIN_TRIG   7
-#define PIN_ECHO   6
-#define PIN_LED    9    // PWM
-#define PIN_BUZZER 10   // PWM
-
-QueueHandle_t queueJarak;
+// Inisialisasi LCD I2C (Alamat default biasanya 0x27 atau 0x3F)
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-void taskBacaJarak(void *pvParameters);
-void taskKontrolOutput(void *pvParameters);
+// Pin Komponen
+const int trigPin = 2;
+const int echoPin = 3;
+const int ledHijau = 4;
+const int ledKuning = 5;
+const int ledMerah = 6;
+const int buzzer = 7;
+
+// Batas Jarak (dalam cm)
+const int batasKosong = 50;  // Di atas ini: "KOSONG"
+const int jarakJauh = 30;    // Antara 30 - 50: "Mundur"
+const int jarakSedang = 15;  // Antara 15 - 30: "Pelan"
+const int jarakAman = 10;    // Di bawah 15: "STOP"
+
+// Variabel Logika & Waktu
+bool mobilParkir = false;
+unsigned long waktuMulaiStop = 0;
+unsigned long waktuMulaiParkir = 0;
+unsigned long durasiParkirDetik = 0;
+const long tarifPerDetik = 50; // Contoh tarif: Rp 50 per detik (bisa disesuaikan)
 
 void setup() {
-  Serial.begin(9600);
+  // Inisialisasi Pin
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(ledHijau, OUTPUT);
+  pinMode(ledKuning, OUTPUT);
+  pinMode(ledMerah, OUTPUT);
+  pinMode(buzzer, OUTPUT);
 
+  // Inisialisasi LCD
   lcd.init();
   lcd.backlight();
+  
+  // Tampilan Awal
+  lcd.setCursor(0, 0);
+  lcd.print(" Slot Parkir ");
+  lcd.setCursor(0, 1);
+  lcd.print("     KOSONG     ");
+  delay(2000);
   lcd.clear();
-  lcd.print("System Ready...");
-
-  pinMode(PIN_TRIG,   OUTPUT);
-  pinMode(PIN_ECHO,   INPUT);
-  pinMode(PIN_LED,    OUTPUT);
-  pinMode(PIN_BUZZER, OUTPUT);
-
-  queueJarak = xQueueCreate(1, sizeof(float));
-  xTaskCreate(taskBacaJarak, "BacaJarak", 128, NULL, 1, NULL);
-  xTaskCreate(taskKontrolOutput, "kontrolOutput", 128, NULL, 1, NULL);
 }
 
-void taskBacaJarak(void *pvParameters) {
-  (void) pvParameters;
+void loop() {
+  long jarak = hitungJarak();
 
-  for(;;){
-    digitalWrite(PIN_TRIG, LOW);
-    delayMicroseconds(2);
-    digitalWrite(PIN_TRIG, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(PIN_TRIG, LOW);
-
-    long durasi = pulseIn(PIN_ECHO, HIGH, 30000);
-    float jarakHasil;
-
-    if (durasi == 0){
-      jarakHasil = -1;
-    } else {
-      jarakHasil = durasi * 0.0343 / 2.0;
+  // KONDISI 1: Mobil belum parkir menetap (Proses Parkir)
+// KONDISI 1: Mobil belum parkir menetap (Proses Parkir)
+  if (!mobilParkir) {
+    if (jarak > batasKosong) {
+      // Tidak ada mobil yang terdeteksi dalam radius 50cm
+      tampilanLCD("  SLOT KOSONG  ", " Menunggu...   ");
+      setKondisiKomponen(HIGH, LOW, LOW, false, 0); // LED Hijau menyala (tersedia)
+      waktuMulaiStop = 0; // Reset timer 3 detik
     }
+    else if (jarak > jarakJauh && jarak <= batasKosong) {
+      // Jarak 31 - 50: Mobil mulai masuk, arahkan mundur
+      tampilanLCD("MUNDUR...", "Jarak: " + String(jarak) + "cm");
+      setKondisiKomponen(HIGH, LOW, LOW, false, 0);
+      waktuMulaiStop = 0; // Reset timer 3 detik
+    } 
+    else if (jarak > jarakAman && jarak <= jarakJauh) {
+      // Jarak Menengah: Pelan-pelan
+      tampilanLCD("PELAN-PELAN", "Jarak: " + String(jarak) + "cm");
+      setKondisiKomponen(LOW, HIGH, LOW, true, 500); // Buzzer jeda lambat
+      waktuMulaiStop = 0; // Reset timer 3 detik
+    } 
+    else if (jarak <= jarakAman && jarak > 2) { // Jarak > 2cm untuk menghindari error
+      // Jarak Sudah Cukup: STOP!
+      tampilanLCD("!! STOP !!", "Jarak: " + String(jarak) + "cm");
+      setKondisiKomponen(LOW, LOW, HIGH, true, 100); // Buzzer jeda cepat
 
-    xQueueSend(queueJarak, &jarakHasil, portMAX_DELAY);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+      // Mulai hitung apakah mobil diam selama 3 detik
+      if (waktuMulaiStop == 0) {
+        waktuMulaiStop = millis();
+      } else if (millis() - waktuMulaiStop >= 3000) {
+        // Sudah 3 detik diam di posisi STOP -> Mobil dianggap sudah parkir & mesin mati
+        mobilParkir = true;
+        waktuMulaiParkir = millis(); // Mulai Stopwatch Parkir
+        lcd.clear();
+        digitalWrite(buzzer, LOW); // Matikan buzzer bising
+      }
+    }
   }
-}
+  // KONDISI 2: Mobil Sudah Parkir Menetap (Stopwatch & Hitung Tarif)
+  else {
+    // LED Merah menyala terus menandakan slot terisi
+    digitalWrite(ledHijau, LOW);
+    digitalWrite(ledKuning, LOW);
+    digitalWrite(ledMerah, HIGH);
 
-void taskKontrolOutput(void *pvParameters) {
-  (void) pvParameters;
+    // Hitung durasi parkir berjalan
+    durasiParkirDetik = (millis() - waktuMulaiParkir) / 1000;
+    long totalTarif = durasiParkirDetik * tarifPerDetik;
 
-  float jarak = 0.0;
-  unsigned long previousMillis = 0;
-  bool buzzerState = false;
+    // Tampilkan Stopwatch dan Tarif di LCD
+    lcd.setCursor(0, 0);
+    lcd.print("TERISI | T:" + formatWaktu(durasiParkirDetik));
+    lcd.setCursor(0, 1);
+    lcd.print("Biaya: Rp " + String(totalTarif));
 
-  unsigned long waktuMasuk = 0;
-  bool statusParkir = false;
-
-  for(;;){
-    if (xQueueReceive(queueJarak, &jarak, portMAX_DELAY) == pdPASS){
-      unsigned long sekarang = millis();
-      int ledVal = 0, freq = 0;
-      unsigned long interval = 0;
-      String zona = "";
-      bool buzzerContinue = false;
-
-      if (jarak < 0 || jarak > 50) { 
-        zona = (jarak < 0) ? "Bebas" : "Aman";
-        statusParkir = false;
-      }
-      else { 
-        if (!statusParkir) {
-          waktuMasuk = sekarang;
-          statusParkir = true;
-        }
-
-        if      (jarak <= 5)  { zona = "< 5cm";  ledVal = 255; freq = 3000; buzzerContinue = true;} 
-        else if (jarak <= 15) { zona = "KRITIS"; ledVal = 255; freq = 2500; interval = 80;   }
-        else if (jarak <= 30) { zona = "Dekat";  ledVal = 180; freq = 2000; interval = 200;  }
-        else if (jarak <= 50) { zona = "Hati2";  ledVal = 100; freq = 1500; interval = 500;  }
-      }
-
-      unsigned long menit = 0;
-      unsigned long detik = 0;
-      unsigned long tarif = 0;
-      
-      if (statusParkir) {
-        unsigned long totalDetik = (sekarang - waktuMasuk) / 1000;
-        menit = totalDetik / 60;
-        detik = totalDetik % 60;
-        tarif = ((menit / 30) + 1) * 2000;
-      }
-
-      analogWrite(PIN_LED, ledVal); 
-
-      if (buzzerContinue) {
-        tone(PIN_BUZZER, freq);
-      } else if (interval == 0) {
-        noTone(PIN_BUZZER);
-        buzzerState = false;
-      } else {
-        if (sekarang - previousMillis >= interval) {
-          previousMillis = sekarang;
-          buzzerState = !buzzerState;
-          if (buzzerState) {tone(PIN_BUZZER, freq);}
-          else {noTone(PIN_BUZZER);}
-        }
-      }
-
+    // Cek apakah mobil bergerak pergi (jarak menjauh kembali)
+    if (jarak > (jarakAman + 10)) { 
+      // Mobil pergi! Tampilkan ringkasan biaya akhir selama 5 detik
       lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Total Waktu:" + formatWaktu(durasiParkirDetik));
+      lcd.setCursor(0, 1);
+      lcd.print("Total: Rp" + String(totalTarif));
+      
+      // Buzzer berbunyi panjang sebagai tanda transaksi selesai
+      digitalWrite(buzzer, HIGH);
+      delay(1000);
+      digitalWrite(buzzer, LOW);
+      delay(4000); // Total display 5 detik
 
-      if (statusParkir) {
-        lcd.setCursor(0, 0);
-        lcd.print("Durasi: ");
-        if(menit < 10) lcd.print("0");
-        lcd.print(menit);
-        lcd.print("m ");
-        if(detik < 10) lcd.print("0");
-        lcd.print(detik);
-        lcd.print("s");
-
-        lcd.setCursor(0, 1);
-        lcd.print("Tarif : Rp ");
-        lcd.print(tarif);
-      } 
-      else {
-        lcd.setCursor(0, 0);
-        lcd.print("Slot: Kosong");
-        lcd.setCursor(0, 1);
-        lcd.print("Tarif: Rp 0");
-      }
-
-      Serial.print("Jarak: ");
-      Serial.print(jarak);
-      if (statusParkir) {
-        Serial.print(" | Waktu: "); Serial.print(menit); Serial.print("m "); Serial.print(detik); Serial.print("s");
-        Serial.print(" | Tarif: Rp "); Serial.println(tarif);
-      } else {
-        Serial.println(" | Slot Kosong");
-      }
+      // Reset sistem ke kondisi awal (Kosong)
+      mobilParkir = false;
+      waktuMulaiStop = 0;
+      lcd.clear();
     }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+  delay(100); // Delay kecil untuk stabilitas sensor
+}
+
+// Fungsi Mengukur Jarak dengan HC-SR04
+long hitungJarak() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  long durasi = pulseIn(echoPin, HIGH);
+  long jarakCm = durasi * 0.034 / 2;
+  return jarakCm;
+}
+
+// Fungsi Helper untuk Update LCD agar tidak berkedip (flicker)
+String lastBaris1 = "", lastBaris2 = "";
+void tampilanLCD(String baris1, String baris2) {
+  if (baris1 != lastBaris1) {
+    lcd.setCursor(0, 0);
+    lcd.print("                "); // Clear baris
+    lcd.setCursor(0, 0);
+    lcd.print(baris1);
+    lastBaris1 = baris1;
+  }
+  if (baris2 != lastBaris2) {
+    lcd.setCursor(0, 1);
+    lcd.print("                "); // Clear baris
+    lcd.setCursor(0, 1);
+    lcd.print(baris2);
+    lastBaris2 = baris2;
   }
 }
 
-void loop() {}
+// Fungsi Mengatur LED dan Buzzer Berkedip
+void setKondisiKomponen(int h, int k, int m, bool bz, int jeda) {
+  digitalWrite(ledHijau, h);
+  digitalWrite(ledKuning, k);
+  digitalWrite(ledMerah, m);
+  
+  if (bz) {
+    // Membuat efek buzzer berkedip sesuai jeda tanpa mengacaukan millis
+    if ((millis() / jeda) % 2 == 0) {
+      digitalWrite(buzzer, HIGH);
+    } else {
+      digitalWrite(buzzer, LOW);
+    }
+  } else {
+    digitalWrite(buzzer, LOW);
+  }
+}
+
+// Fungsi Mengubah Detik menjadi Format Menit:Detik (MM:SS)
+String formatWaktu(long totalDetik) {
+  long menit = totalDetik / 60;
+  long detik = totalDetik % 60;
+  String strMenit = (menit < 10) ? "0" + String(menit) : String(menit);
+  String strDetik = (detik < 10) ? "0" + String(detik) : String(detik);
+  return strMenit + ":" + strDetik;
+}
