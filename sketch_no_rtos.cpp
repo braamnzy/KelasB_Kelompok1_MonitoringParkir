@@ -5,12 +5,12 @@
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // Pin Komponen
-const int trigPin = 2;
-const int echoPin = 3;
+const int trigPin = 7;
+const int echoPin = 6;
 const int ledHijau = 4;
 const int ledKuning = 5;
-const int ledMerah = 6;
-const int buzzer = 7;
+const int ledMerah = 9;
+const int buzzer = 10;
 
 // Batas Jarak (dalam cm)
 const int batasKosong = 50;  // Di atas ini: "KOSONG"
