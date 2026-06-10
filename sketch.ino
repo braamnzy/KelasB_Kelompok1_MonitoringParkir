@@ -1,185 +1,224 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <Arduino_FreeRTOS.h>
 
-// Inisialisasi LCD I2C (Alamat default biasanya 0x27 atau 0x3F)
+// Inisialisasi LCD I2C
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // Pin Komponen
-const int trigPin = 2;
-const int echoPin = 3;
-const int ledHijau = 4;
-const int ledKuning = 5;
-const int ledMerah = 6;
-const int buzzer = 7;
+const int trigPin = 7;
+const int echoPin = 6;
+const int ledMerah = 9; 
+const int buzzer = 10;
 
 // Batas Jarak (dalam cm)
-const int batasKosong = 50;  // Di atas ini: "KOSONG"
-const int jarakJauh = 30;    // Antara 30 - 50: "Mundur"
-const int jarakSedang = 15;  // Antara 15 - 30: "Pelan"
-const int jarakAman = 10;    // Di bawah 15: "STOP"
+const int batasKosong = 50;
+const int jarakJauh = 30;
+const int jarakAman = 10;
+const long tarifPerDetik = 50;
 
-// Variabel Logika & Waktu
-bool mobilParkir = false;
-unsigned long waktuMulaiStop = 0;
-unsigned long waktuMulaiParkir = 0;
-unsigned long durasiParkirDetik = 0;
-const long tarifPerDetik = 50; // Contoh tarif: Rp 50 per detik (bisa disesuaikan)
+// Shared Variables menggunakan 'volatile' agar sinkron antar task tanpa Semaphore
+volatile long globalJarak = 100;
+String lcdBaris1 = "   SLOT KOSONG  ";
+String lcdBaris2 = " Menunggu...    ";
+
+// Handle untuk Task
+void TaskBacaSensor(void *pvParameters);
+void TaskLogikaParkir(void *pvParameters);
+void TaskTampilanLCD(void *pvParameters);
 
 void setup() {
   // Inisialisasi Pin
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
-  pinMode(ledHijau, OUTPUT);
-  pinMode(ledKuning, OUTPUT);
   pinMode(ledMerah, OUTPUT);
   pinMode(buzzer, OUTPUT);
 
   // Inisialisasi LCD
   lcd.init();
   lcd.backlight();
-  
-  // Tampilan Awal
   lcd.setCursor(0, 0);
   lcd.print(" Slot Parkir ");
   lcd.setCursor(0, 1);
-  lcd.print("     KOSONG     ");
-  delay(2000);
+  lcd.print("   RTOS Solo   ");
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
   lcd.clear();
+
+  // Pembuatan Task RTOS
+  xTaskCreate(TaskBacaSensor, "BacaSensor", 128, NULL, 3, NULL);
+  xTaskCreate(TaskLogikaParkir, "LogikaParkir", 256, NULL, 2, NULL);
+  xTaskCreate(TaskTampilanLCD, "TampilanLCD", 192, NULL, 1, NULL);
 }
 
 void loop() {
-  long jarak = hitungJarak();
+  // Kosong
+}
 
-  // KONDISI 1: Mobil belum parkir menetap (Proses Parkir)
-// KONDISI 1: Mobil belum parkir menetap (Proses Parkir)
-  if (!mobilParkir) {
-    if (jarak > batasKosong) {
-      // Tidak ada mobil yang terdeteksi dalam radius 50cm
-      tampilanLCD("  SLOT KOSONG  ", " Menunggu...   ");
-      setKondisiKomponen(HIGH, LOW, LOW, false, 0); // LED Hijau menyala (tersedia)
-      waktuMulaiStop = 0; // Reset timer 3 detik
+/*--------------------------------------------------*/
+/*---------------------- Tasks ---------------------*/
+/*--------------------------------------------------*/
+
+void TaskBacaSensor(void *pvParameters) {
+  (void) pvParameters;
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+
+  for (;;) {
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+    
+    long durasi = pulseIn(echoPin, HIGH, 30000); 
+    long jarakCm = durasi * 0.034 / 2;
+    
+    if (jarakCm > 0) {
+      globalJarak = jarakCm; 
+    } else {
+      globalJarak = 999; 
     }
-    else if (jarak > jarakJauh && jarak <= batasKosong) {
-      // Jarak 31 - 50: Mobil mulai masuk, arahkan mundur
-      tampilanLCD("MUNDUR...", "Jarak: " + String(jarak) + "cm");
-      setKondisiKomponen(HIGH, LOW, LOW, false, 0);
-      waktuMulaiStop = 0; // Reset timer 3 detik
-    } 
-    else if (jarak > jarakAman && jarak <= jarakJauh) {
-      // Jarak Menengah: Pelan-pelan
-      tampilanLCD("PELAN-PELAN", "Jarak: " + String(jarak) + "cm");
-      setKondisiKomponen(LOW, HIGH, LOW, true, 500); // Buzzer jeda lambat
-      waktuMulaiStop = 0; // Reset timer 3 detik
-    } 
-    else if (jarak <= jarakAman && jarak > 2) { // Jarak > 2cm untuk menghindari error
-      // Jarak Sudah Cukup: STOP!
-      tampilanLCD("!! STOP !!", "Jarak: " + String(jarak) + "cm");
-      setKondisiKomponen(LOW, LOW, HIGH, true, 100); // Buzzer jeda cepat
 
-      // Mulai hitung apakah mobil diam selama 3 detik
-      if (waktuMulaiStop == 0) {
-        waktuMulaiStop = millis();
-      } else if (millis() - waktuMulaiStop >= 3000) {
-        // Sudah 3 detik diam di posisi STOP -> Mobil dianggap sudah parkir & mesin mati
-        mobilParkir = true;
-        waktuMulaiParkir = millis(); // Mulai Stopwatch Parkir
-        lcd.clear();
-        digitalWrite(buzzer, LOW); // Matikan buzzer bising
+    vTaskDelayUntil(&xLastWakeTime, (100 / portTICK_PERIOD_MS));
+  }
+}
+
+void TaskLogikaParkir(void *pvParameters) {
+  (void) pvParameters;
+
+  bool mobilParkir = false;
+  bool modeTampilTotal = false;
+  TickType_t waktuMulaiStop = 0;
+  TickType_t waktuMulaiParkir = 0;
+  TickType_t waktuMulaiKeluar = 0;
+  unsigned long durasiParkirDetik = 0;
+  long totalTarifAkhir = 0;
+  unsigned long durasiAkhir = 0;
+
+  for (;;) {
+    long jarak = globalJarak; 
+    bool skipBaseDelay = false;
+
+    if (modeTampilTotal) {
+      // Menampilkan total biaya selama 5 detik secara NON-BLOCKING
+      lcdBaris1 = "Total Waktu:" + formatWaktu(durasiAkhir);
+      lcdBaris2 = "Total: Rp" + String(totalTarifAkhir);
+      
+      // Mengatur bunyi buzzer 1 detik pertama saat keluar
+      if ((xTaskGetTickCount() - waktuMulaiKeluar) < (1000 / portTICK_PERIOD_MS)) {
+        digitalWrite(buzzer, HIGH);
+      } else {
+        digitalWrite(buzzer, LOW);
+      }
+
+      // Setelah 5 detik selesai, kembalikan ke standby
+      if ((xTaskGetTickCount() - waktuMulaiKeluar) >= (5000 / portTICK_PERIOD_MS)) {
+        modeTampilTotal = false;
+        mobilParkir = false;
+        waktuMulaiStop = 0;
       }
     }
+    else if (!mobilParkir) {
+      if (jarak > batasKosong) {
+        lcdBaris1 = "   SLOT KOSONG  ";
+        lcdBaris2 = " Menunggu...    ";
+        digitalWrite(ledMerah, LOW);
+        digitalWrite(buzzer, LOW);
+        waktuMulaiStop = 0;
+      }
+      else if (jarak > jarakJauh && jarak <= batasKosong) {
+        lcdBaris1 = "MUNDUR...";
+        lcdBaris2 = "Jarak: " + String(jarak) + "cm";
+        digitalWrite(ledMerah, LOW);
+        digitalWrite(buzzer, LOW);
+        waktuMulaiStop = 0;
+      } 
+      else if (jarak > jarakAman && jarak <= jarakJauh) {
+        lcdBaris1 = "PELAN-PELAN";
+        lcdBaris2 = "Jarak: " + String(jarak) + "cm";
+        digitalWrite(ledMerah, LOW);
+        
+        digitalWrite(buzzer, HIGH);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        digitalWrite(buzzer, LOW);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        
+        waktuMulaiStop = 0;
+        skipBaseDelay = true; 
+      } 
+      else if (jarak <= jarakAman) {
+        lcdBaris1 = "!! STOP !!";
+        lcdBaris2 = "Jarak: " + String(jarak) + "cm";
+        digitalWrite(ledMerah, HIGH);
+
+        digitalWrite(buzzer, HIGH);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+        digitalWrite(buzzer, LOW);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+
+        if (waktuMulaiStop == 0) {
+          waktuMulaiStop = xTaskGetTickCount();
+        } else if ((xTaskGetTickCount() - waktuMulaiStop) >= (3000 / portTICK_PERIOD_MS)) {
+          mobilParkir = true;
+          waktuMulaiParkir = xTaskGetTickCount();
+          digitalWrite(buzzer, LOW);
+        }
+        skipBaseDelay = true;
+      }
+    }
+    else {
+      digitalWrite(ledMerah, HIGH);
+      digitalWrite(buzzer, LOW);
+
+      durasiParkirDetik = (xTaskGetTickCount() - waktuMulaiParkir) * portTICK_PERIOD_MS / 1000;
+      long totalTarif = durasiParkirDetik * tarifPerDetik;
+
+      lcdBaris1 = "TERISI | T:" + formatWaktu(durasiParkirDetik);
+      lcdBaris2 = "Biaya: Rp " + String(totalTarif);
+
+      if (jarak > (jarakAman + 10)) { 
+        // Kunci data akhir ke variabel sementara
+        durasiAkhir = durasiParkirDetik;
+        totalTarifAkhir = totalTarif;
+        
+        // Aktifkan mode transisi non-blocking
+        waktuMulaiKeluar = xTaskGetTickCount();
+        modeTampilTotal = true; 
+      }
+    }
+    
+    if (!skipBaseDelay) {
+      vTaskDelay(100 / portTICK_PERIOD_MS); 
+    }
   }
-  // KONDISI 2: Mobil Sudah Parkir Menetap (Stopwatch & Hitung Tarif)
-  else {
-    // LED Merah menyala terus menandakan slot terisi
-    digitalWrite(ledHijau, LOW);
-    digitalWrite(ledKuning, LOW);
-    digitalWrite(ledMerah, HIGH);
+}
 
-    // Hitung durasi parkir berjalan
-    durasiParkirDetik = (millis() - waktuMulaiParkir) / 1000;
-    long totalTarif = durasiParkirDetik * tarifPerDetik;
+void TaskTampilanLCD(void *pvParameters) {
+  (void) pvParameters;
+  String lastBaris1 = "", lastBaris2 = "";
 
-    // Tampilkan Stopwatch dan Tarif di LCD
-    lcd.setCursor(0, 0);
-    lcd.print("TERISI | T:" + formatWaktu(durasiParkirDetik));
-    lcd.setCursor(0, 1);
-    lcd.print("Biaya: Rp " + String(totalTarif));
-
-    // Cek apakah mobil bergerak pergi (jarak menjauh kembali)
-    if (jarak > (jarakAman + 10)) { 
-      // Mobil pergi! Tampilkan ringkasan biaya akhir selama 5 detik
-      lcd.clear();
+  for (;;) {
+    if (lcdBaris1 != lastBaris1) {
       lcd.setCursor(0, 0);
-      lcd.print("Total Waktu:" + formatWaktu(durasiParkirDetik));
+      lcd.print("                ");
+      lcd.setCursor(0, 0);
+      lcd.print(lcdBaris1);
+      lastBaris1 = lcdBaris1;
+    }
+    if (lcdBaris2 != lastBaris2) {
       lcd.setCursor(0, 1);
-      lcd.print("Total: Rp" + String(totalTarif));
-      
-      // Buzzer berbunyi panjang sebagai tanda transaksi selesai
-      digitalWrite(buzzer, HIGH);
-      delay(1000);
-      digitalWrite(buzzer, LOW);
-      delay(4000); // Total display 5 detik
-
-      // Reset sistem ke kondisi awal (Kosong)
-      mobilParkir = false;
-      waktuMulaiStop = 0;
-      lcd.clear();
+      lcd.print("                ");
+      lcd.setCursor(0, 1);
+      lcd.print(lcdBaris2);
+      lastBaris2 = lcdBaris2;
     }
-  }
-  delay(100); // Delay kecil untuk stabilitas sensor
-}
-
-// Fungsi Mengukur Jarak dengan HC-SR04
-long hitungJarak() {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-  
-  long durasi = pulseIn(echoPin, HIGH);
-  long jarakCm = durasi * 0.034 / 2;
-  return jarakCm;
-}
-
-// Fungsi Helper untuk Update LCD agar tidak berkedip (flicker)
-String lastBaris1 = "", lastBaris2 = "";
-void tampilanLCD(String baris1, String baris2) {
-  if (baris1 != lastBaris1) {
-    lcd.setCursor(0, 0);
-    lcd.print("                "); // Clear baris
-    lcd.setCursor(0, 0);
-    lcd.print(baris1);
-    lastBaris1 = baris1;
-  }
-  if (baris2 != lastBaris2) {
-    lcd.setCursor(0, 1);
-    lcd.print("                "); // Clear baris
-    lcd.setCursor(0, 1);
-    lcd.print(baris2);
-    lastBaris2 = baris2;
+    vTaskDelay(200 / portTICK_PERIOD_MS); 
   }
 }
 
-// Fungsi Mengatur LED dan Buzzer Berkedip
-void setKondisiKomponen(int h, int k, int m, bool bz, int jeda) {
-  digitalWrite(ledHijau, h);
-  digitalWrite(ledKuning, k);
-  digitalWrite(ledMerah, m);
-  
-  if (bz) {
-    // Membuat efek buzzer berkedip sesuai jeda tanpa mengacaukan millis
-    if ((millis() / jeda) % 2 == 0) {
-      digitalWrite(buzzer, HIGH);
-    } else {
-      digitalWrite(buzzer, LOW);
-    }
-  } else {
-    digitalWrite(buzzer, LOW);
-  }
-}
+/*--------------------------------------------------*/
+/*---------------- Helper Functions ----------------*/
+/*--------------------------------------------------*/
 
-// Fungsi Mengubah Detik menjadi Format Menit:Detik (MM:SS)
 String formatWaktu(long totalDetik) {
   long menit = totalDetik / 60;
   long detik = totalDetik % 60;
